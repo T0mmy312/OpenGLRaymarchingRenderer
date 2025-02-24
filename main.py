@@ -48,9 +48,27 @@ cam_up_uniform = program["cam_up"]
 focal_lenght_uniform = program["focal_lenght"]
 
 smooth_factor_uniform = program["smooth_factor"]
+
+light_pos_uniform = program["light_pos"]
+sky_color_uniform = program["sky_color"]
+
 max_render_dist_uniform = program["max_render_dist"]
 
 num_spheres_uniform = program["num_spheres"]
+num_boxes_uniform = program["num_boxes"]
+
+material_array = MaterialArray()
+
+default_mat = material_array.addMaterial()
+
+default_mat.setColor(vec3(1.0, 0.5, 0.0), material_array)
+default_mat.setDiffuseStrength(1.0, material_array)
+default_mat.setAmbientStrength(0.1, material_array)
+default_mat.setSpecularStrength(0.5, material_array)
+default_mat.setShininess(0.2, material_array)
+
+materials_buffer = ctx.buffer(material_array.toBytes())
+materials_buffer.bind_to_storage_buffer(3)
 
 sphere_array = SphereArr()
 #emptySphere = sphere_array.addSphere()
@@ -68,9 +86,25 @@ sphere3.setRadius(5.0, sphere_array)
 sphere_data_buffer = ctx.buffer(sphere_array.toBytes())
 sphere_data_buffer.bind_to_storage_buffer(0)
 
+box_array = BoxArr()
+
+box1 = box_array.addBox()
+
+box1.setPos(vec3(0, 10, 0), box_array)
+box1.setDimentions(vec3(10, 10, 10), box_array)
+box1.setMaterial(default_mat, box_array)
+
+box_data_buffer = ctx.buffer(box_array.boxDataToBytes())
+box_data_buffer.bind_to_storage_buffer(1)
+box_material_index_buffer = ctx.buffer(box_array.materialDataToBytes())
+box_material_index_buffer.bind_to_storage_buffer(2)
+
 cam_pos: vec3 = vec3(0.0, 15.0, -20.0)
 cam_direc: vec3 = vec3(0.0, 0.0, 1.0)
 focal_lenght = 2
+
+light_pos = vec3(100, 100, 100)
+sky_color = vec3(0, 0, 1)
 
 smooth_factor = 1
 
@@ -79,7 +113,7 @@ delta_time = 0
 
 real_screen_width = 4
 
-max_render_dist = 40
+max_render_dist = 1000
 
 w, a, s, d = False, False, False, False
 up, down = False, False
@@ -161,10 +195,18 @@ while running:
     focal_lenght_uniform.value = focal_lenght
 
     smooth_factor_uniform.value = smooth_factor
+
+    light_pos_uniform.value = light_pos.tuple()
+    sky_color_uniform.value = sky_color.tuple()
+
     max_render_dist_uniform.value = max_render_dist
     
     sphere_data_buffer.write(sphere_array.toBytes())
     num_spheres_uniform.value = sphere_array.numSpheres
+    box_data_buffer.write(box_array.boxDataToBytes())
+    box_material_index_buffer.write(box_array.materialDataToBytes())
+    num_boxes_uniform.value = box_array.numBoxes
+    materials_buffer.write(material_array.toBytes())
 
     ctx.clear(0.1, 0.1, 0.1)
     vao.render(moderngl.TRIANGLE_STRIP)
