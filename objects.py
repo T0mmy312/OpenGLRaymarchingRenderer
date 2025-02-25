@@ -265,7 +265,6 @@ def loadVoxelModel(filepath: str, pos: vec3, size: float, boxArray: BoxArr, mate
     material_dict: Dict[str, Material] = {}
 
     voxels = data["voxels"]
-    print(len(voxels))
     for voxel in voxels:
         voxel_pos = vec3(voxel['x'], voxel['y'], voxel['z'])
         if flipYZ:

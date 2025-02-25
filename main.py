@@ -159,7 +159,6 @@ space, shift = False, False
 
 # setup voxel model
 voxel_model = loadVoxelModel("voxelModels/testModel.vpp", vec3(20, 5, 20), 2, box_array, material_array)
-print(len(voxel_model.posToBox))
 
 # Mouse sensitivity
 mouse_sensitivity = 0.002
