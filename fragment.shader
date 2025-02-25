@@ -14,7 +14,6 @@ uniform float focal_lenght;
 
 uniform float smooth_factor;
 
-uniform vec3 light_pos;
 uniform vec3 sky_color;
 
 uniform float max_render_dist;
@@ -44,9 +43,39 @@ Material defaultMaterial = Material(
     vec3(0.8, 0.8, 0.8), 0.1, 0.8, 0.5, 32.0
 );
 
-layout(std430, binding = 3) buffer MaterialBuffer {
-    Material materials[];
+layout(std430, binding = 3) buffer MaterialDataBuffer {
+    float material_data[];
 };
+
+struct Light {
+    vec3 pos;
+    float intensity;
+    vec3 color;
+};
+
+layout(std430, binding = 4) buffer LightDataBuffer {
+    float light_data[];
+};
+uniform uint num_lights;
+
+Material getMaterial(uint index) { // the float index ist assumed not the obj index
+    return Material(
+        vec3(material_data[index], material_data[index + 1], material_data[index + 2]),
+        material_data[index + 3],
+        material_data[index + 4],
+        material_data[index + 5],
+        material_data[index + 6]
+    );
+}
+
+Light getLight(uint index) {
+    uint realIndex = index * 7;
+    return Light(
+        vec3(light_data[realIndex], light_data[realIndex + 1], light_data[realIndex + 2]),
+        light_data[realIndex + 3],
+        vec3(light_data[realIndex + 4], light_data[realIndex + 5], light_data[realIndex + 6])
+    );
+}
 
 float smin(float a, float b, float k) {
     float h = clamp(0.5 + 0.5*(a-b)/k, 0.0, 1.0);
@@ -73,7 +102,7 @@ vec3 boxDim(uint index) {
 }
 
 Material boxMaterial(uint index) {
-    return materials[box_material_indexes[index]];
+    return getMaterial(box_material_indexes[index]);
 }
 
 float boxDist(vec3 curr_pos, uint index) {
@@ -94,13 +123,13 @@ float dist(vec3 curr_pos) {
     float min_dist = max_render_dist;
     for (int i = 0; i < num_spheres; i++) {
         float curr_dist = distance(curr_pos, spherePos(i)) - sphereRadius(i);
-        min_dist = smin(curr_dist, min_dist, smooth_factor);
+        min_dist = min(curr_dist, min_dist);//, smooth_factor);
     }
     for (int i = 0; i < num_boxes; i++) {
-        min_dist = smin(boxDist(curr_pos, i), min_dist, smooth_factor);
+        min_dist = min(boxDist(curr_pos, i), min_dist);//, smooth_factor);
     }
-    min_dist = smin(abs(curr_pos.y), min_dist, smooth_factor); // floor at y = 0
-    min_dist = smin(infSpheresDist(curr_pos), min_dist, smooth_factor);
+    min_dist = min(abs(curr_pos.y), min_dist);//, smooth_factor); // floor at y = 0
+    min_dist = min(infSpheresDist(curr_pos), min_dist);//, smooth_factor);
     return max(min_dist, 0.0);
 }
 
@@ -133,20 +162,49 @@ vec3 getNormal(vec3 p) {
     ));
 }
 
-vec3 shade(vec3 p, Material mat, vec3 lightPos) {
-    vec3 N = getNormal(p); // Surface normal
-    vec3 L = normalize(lightPos - p); // Light direction
-    vec3 V = normalize(-p); // View direction (camera at origin)
-    vec3 R = reflect(-L, N); // Reflection direction
+// old shade fuction
+//vec3 shade(vec3 p, Material mat, vec3 lightPos) {
+//    vec3 N = getNormal(p); // Surface normal
+//    vec3 L = normalize(lightPos - p); // Light direction
+//    vec3 V = normalize(-p); // View direction (camera at origin)
+//    vec3 R = reflect(-L, N); // Reflection direction
+//
+//    // Lambertian diffuse reflection
+//    float diff = max(dot(N, L), 0.0) * mat.diffuseStrength;
+//    // Phong specular reflection
+//    float spec = pow(max(dot(R, V), 0.0), mat.shininess) * mat.specularStrength * smoothstep(0.0, 0.2, dot(N, L));
+//    // Ambient light
+//    float ambient = mat.ambientStrength;
+//
+//    return mat.color * (ambient + diff) + vec3(1.0) * spec;
+//}
 
-    // Lambertian diffuse reflection
-    float diff = max(dot(N, L), 0.0) * mat.diffuseStrength;
-    // Phong specular reflection
-    float spec = pow(max(dot(R, V), 0.0), mat.shininess) * mat.specularStrength * smoothstep(0.0, 0.2, dot(N, L));
-    // Ambient light
-    float ambient = mat.ambientStrength;
+vec3 shade(vec3 p, Material mat) {
+    vec3 finalColor = vec3(0.0); // Start with no light contribution
 
-    return mat.color * (ambient + diff) + vec3(1.0) * spec;
+    // Loop over all the lights
+    for (int i = 0; i < num_lights; ++i) {
+        Light light = getLight(i);
+        vec3 L = normalize(light.pos - p); // Light direction
+        vec3 N = getNormal(p); // Surface normal
+        vec3 V = normalize(-p); // View direction (camera at origin)
+        vec3 R = reflect(-L, N); // Reflection direction
+
+        // Diffuse component (Lambertian reflection)
+        float diff = max(dot(N, L), 0.0) * mat.diffuseStrength;
+
+        // Specular component (Phong reflection)
+        float spec = pow(max(dot(R, V), 0.0), mat.shininess) * mat.specularStrength * smoothstep(0.0, 0.2, dot(N, L));
+
+        // Ambient component
+        float ambient = mat.ambientStrength;
+
+        // Accumulate the light contributions (color * intensity)
+        finalColor += light.color * light.intensity * (ambient + diff + spec);
+    }
+
+    // Apply the material color
+    return mat.color * finalColor;
 }
 
 void main() {
@@ -165,9 +223,9 @@ void main() {
     
     if (total_dist < max_render_dist) {
         Material material = getNearestMaterial(curr_pos);
-        pixel_color = vec4(shade(curr_pos, material, light_pos), 1.0);
+        pixel_color = vec4(shade(curr_pos, material), 1.0 + smooth_factor);
     }
     else {
-        pixel_color = vec4(sky_color, 1.0);
+        pixel_color = vec4(sky_color, 1.0 + smooth_factor);
     }
 }

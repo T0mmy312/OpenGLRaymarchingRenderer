@@ -1,6 +1,11 @@
 import moderngl
+import json
 import numpy as np
+from typing import Dict, Tuple
 from vectors import *
+
+# CAUTION Structs in arrays must be padded to a multiple of 16 bytes
+# also vec3 is aligned to 16 bytes even tho it is only 12 (4 * 3)
 
 MATERIAL_SIZE_FLOATS = 7 # r, g, b, ambientStrenght, diffuseStrenght, specularStrenght, shininess
 MATERIAL_SIZE_BYTES = MATERIAL_SIZE_FLOATS * 4
@@ -55,6 +60,54 @@ class MaterialArray:
         ret = Material(self.numMaterials * MATERIAL_SIZE_FLOATS)
         self.numMaterials += 1
         self.data.resize((self.numMaterials * MATERIAL_SIZE_FLOATS))
+        return ret
+    
+    def toBytes(self) -> bytes:
+        return self.data.tobytes()
+    
+LIGHT_SIZE_FLOATS = 7 # x, y, z, intensity, r, g, b
+LIGHT_SIZE_BYTES = LIGHT_SIZE_FLOATS * 4
+
+class Light:
+    index: int = 0
+
+    def __init__(self, index):
+        self.index = index
+
+    def setPosition(self, pos: vec3, lightArray):
+        lightArray.data[self.index] = pos.x
+        lightArray.data[self.index + 1] = pos.y
+        lightArray.data[self.index + 2] = pos.z
+    
+    def getPosition(self, lightArray) -> vec3:
+        return vec3(lightArray.data[self.index], lightArray.data[self.index + 1], lightArray.data[self.index + 2])
+    
+    def setIntensity(self, intensity: float, lightArray):
+        lightArray.data[self.index + 3] = intensity
+    
+    def getIntensity(self, lightArray):
+        return lightArray.data[self.index + 3]
+    
+    def setColor(self, color: vec3, lightArray):
+        lightArray.data[self.index + 4] = color.x
+        lightArray.data[self.index + 5] = color.y
+        lightArray.data[self.index + 6] = color.z
+    
+    def getColor(self, lightArray) -> vec3:
+        return vec3(lightArray.data[self.index + 4], lightArray.data[self.index + 5], lightArray.data[self.index + 6])
+
+class LightArray:
+    data = np.array([], dtype="f4")
+    numLights: int = 0
+
+    def __init__(self):
+        self.data = np.array([], dtype="f4")
+        self.numLights = 0
+    
+    def addLight(self) -> Light:
+        ret = Light(self.numLights * LIGHT_SIZE_FLOATS)
+        self.numLights += 1
+        self.data.resize((self.numLights * LIGHT_SIZE_FLOATS))
         return ret
     
     def toBytes(self) -> bytes:
@@ -155,3 +208,86 @@ class BoxArr:
 
     def materialDataToBytes(self) -> bytes:
         return self.material_data.tobytes()
+
+class VoxelModel:
+    _size: float = 1
+    _pos: vec3 = vec3(0, 0, 0)
+    posToBox: Dict[Tuple[float, float, float], Box] = {}
+
+    def __init__(self, pos: vec3 = vec3(0, 0, 0), size: float = 1, posToBox: Dict[Tuple[float, float, float], Box] = {}):
+        self._size = size
+        self._pos = pos
+        self.posToBox = posToBox
+    
+    def getBox(self, pos: vec3) -> Box:
+        return self.posToBox[pos.tuple()]
+    
+    def setBox(self, pos: vec3, box: Box, boxArray: BoxArr):
+        box.setPos(self._pos + pos, boxArray)
+        box.setDimentions(vec3(self._size, self._size, self._size), boxArray)
+        self.posToBox[pos.tuple()] = box
+
+    def addBox(self, pos: vec3, boxArray: BoxArr) -> Box:
+        box = boxArray.addBox()
+        box.setPos(self._pos + pos, boxArray)
+        box.setDimentions(vec3(self._size, self._size, self._size), boxArray)
+        self.posToBox[pos.tuple()] = box
+        return box
+    
+    def getPos(self) -> vec3:
+        return self._pos
+    
+    def setPos(self, pos: vec3, boxArray: BoxArr):
+        self._pos = pos
+        for offset, box in self.posToBox.items():
+            new_pos = vec3(offset[0], offset[1], offset[2]) + pos
+            box.setPos(new_pos, boxArray)
+    
+    def getSize(self) -> float:
+        return self._size
+
+    def setSize(self, size: float, boxArray: BoxArr):
+        self._size = size
+        for box in self.posToBox.values():
+            box.setDimentions(vec3(size, size, size), boxArray)
+
+def hex_to_rgb_vec3(hex_color: str) -> vec3:
+    hex_color = hex_color.lstrip('#')
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    return vec3(r / 255.0, g / 255.0, b / 255.0)
+
+def loadVoxelModel(filepath: str, pos: vec3, size: float, boxArray: BoxArr, materialArray: MaterialArray, flipYZ: bool = True) -> VoxelModel:
+    voxel_model = VoxelModel(pos, size)
+    data = {}
+    with open(filepath, "r") as file:
+        data = json.load(file)
+
+    material_dict: Dict[str, Material] = {}
+
+    voxels = data["voxels"]
+    print(len(voxels))
+    for voxel in voxels:
+        voxel_pos = vec3(voxel['x'], voxel['y'], voxel['z'])
+        if flipYZ:
+            temp = voxel_pos.z
+            voxel_pos.z = voxel_pos.y
+            voxel_pos.y = temp
+
+        mat = Material(-1)
+        color_hex = voxel['c']
+        if color_hex in material_dict:
+            mat = material_dict[color_hex]
+        else:
+            color = hex_to_rgb_vec3(color_hex)
+            mat = materialArray.addMaterial()
+            mat.setColor(color, materialArray)
+            mat.setAmbientStrength(0.1, materialArray)
+            mat.setDiffuseStrength(0.8, materialArray)
+            mat.setSpecularStrength(0.5, materialArray)
+            mat.setShininess(32.0, materialArray)
+            material_dict[color_hex] = mat
+
+        box = voxel_model.addBox(voxel_pos * size, boxArray)
+        box.setMaterial(mat, boxArray)
+    
+    return voxel_model
